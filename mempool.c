@@ -1,16 +1,20 @@
-#include<util_type.h>
-#include<util_os.h>
-#include<mempool.h>
+#include "util_type.h"
+#include "util_os.h"
+#include "mempool.h"
 
 #define MEM_AREA_MIN_SIZE 2 * MEM_AREA_EXTRA_SIZE
 #define MEM_AREA_FREE 1
-//declare as be static private
+//declare as static private
 struct mem_pool_struct{
 	byte* 	buf;
 	ulong 	size;
 	ulong 	reserved;
 	mutex_t mutex;
 	list_head_t free_list[64];
+	ulong count[64];
+#ifdef UNIV_DEBUG
+	ulong free_count[64];
+#endif
 	//mem_area_t*  free_list[64];
 };
 
@@ -29,33 +33,9 @@ static inline void mem_area_get_free(mem_area_t* area){
 	return (area->size_and_free & MEM_AREA_FREE);
 }
 
-static inline void mem_area_set_free(mem_area_t* area, int free){
-	area->size_and_free = (area->size_and_free & ~MEM_AREA_FREE) | free;
+static inline void mem_area_set_free(mem_area_t* area, int free_flag){
+	area->size_and_free = (area->size_and_free & ~MEM_AREA_FREE) | free_flag;
 }
-/*
-static inline void mem_area_list_add(mem_area_t* head, mem_area_t* area){
-	mem_area_t* tmp;
-	tmp = head;
-	head = area;	
-	area->next = tmp;
-}
-
-static inline void mem_area_list_del(mem_area_t* head, mem_area_t* area){
-	mem_area_t* tmp;
-
-	if(head == area){
-		head = NULL;		
-	}else{
-		for(tmp = head; tmp; tmp = tmp->next;){
-			if (tmp->next == area){
-				tmp->next = area->next;
-				break;
-			}
-		} 
-	}	
-	area->next = NULL;
-}
-*/
 
 mem_pool_t* mem_pool_create(ulong size){
 	mem_pool_t* pool;
@@ -71,6 +51,10 @@ mem_pool_t* mem_pool_create(ulong size){
 	mutex_create(&pool->mutex);
 	for(i = 0; i < 64; i++){
 		list_init(&pool->free_list[i]);
+		pool->count[i] = 0;
+#ifdef UNIV_DEBUG
+		pool->free_count[i] = 0;
+#endif
 		//pool->free_list[i] = NULL;
 	}
 	
@@ -86,7 +70,10 @@ mem_pool_t* mem_pool_create(ulong size){
 		
 		list_add(&area->free_list, &pool->free_list[i]);
 		//mem_area_list_add(pool->free_list[i], area);
-		
+		pool->count[i]++;
+#ifdef UNIV_DEBUG
+		pool->free_count[i]++;
+#endif
 		used += ut_2_exp(i);
 	}
 	assert(size >= used);
@@ -115,7 +102,8 @@ static int mem_pool_fill_free_list(ulong n, mem_pool_t* pool){
 	area = 	list_entry(&pool->free_list[n + 1], mem_area_t, free_list);
 	//area = pool->free_list[n + 1];
 	if (area == NULL) {
-		if( list_count(&pool->free_list[n + 1]) > 0 ){
+		assert(list_count(&pool->free_list[n + 1]) == pool->count[n + 1]);//
+		if( pool->count[n + 1] > 0 ){
 			//error
 		}
 		ret = mem_pool_fill_free_list(i + 1, pool);
@@ -127,20 +115,35 @@ static int mem_pool_fill_free_list(ulong n, mem_pool_t* pool){
 		//area = pool->free_list[n + 1];
 	}
 	
-	if ( list_count(&pool->free_list[n + 1]) == 0){
+	if ( pool->count[n + 1]) == 0){
 		//error
 	}
-	//rest area
+
+	list_del_init(&area->free_list, &pool->free_list[n + 1]);
+	pool->count[n + 1]--;
+#ifdef UNIV_DEBUG
+	pool->free_count[n + 1]--;
+#endif
+
+	//new area
 	area2 = (mem_area_t*)((byte*)area + ut_2_exp(n));
 	ut_memset((void*)area2, MEM_AREA_EXTRA_SIZE);
 	mem_area_set_size(area2, ut_2_exp(n));
 	mem_area_set_free(area2, TRUE);
-	list_add(area2->free_list, &pool->free_list[n]);
+	list_add(&area2->free_list, &pool->free_list[n]);
+	pool->count[n]++;
+#ifdef UNIV_DEBUG
+	pool->free_count[n]++;
+#endif
 	//mem_area_list_add(pool->free_list[n], area2);
 	
-	//new area
+	//rest area
 	mem_area_set_size(area, ut_2_exp(n));
-	list_add(area->free_list, &pool->free_list[n]);
+	list_add(&area->free_list, &pool->free_list[n]);
+	pool->count[n]++;
+#ifdef UNIV_DEBUG
+	pool->free_count[n]++;
+#endif
 	//mem_area_list_add(pool->free_list[n], area);
 }
 
@@ -170,6 +173,9 @@ void* mem_area_alloc(ulong* psize, mem_pool_t *pool){
 	}
 	assert(mem_area_get_size(pool) == ut_2_exp(n));
 	mem_area_set_free(area,FALSE);
+#ifdef UNIV_DEBUG
+	pool->free_count[n]--;
+#endif
 	pool->reserved += mem_area_get_size(area);
 	mutex_exit(&pool->mutex);
 	//sub struct size
@@ -231,6 +237,10 @@ void mem_area_free(void* ptr, mem_pool_t* pool){
 		}
 		
 		list_del_init(&buddy->free_list);
+		pool->count[n]--;
+#ifdef UNIV_DEBUG
+		pool->free_count[n]--;
+#endif
 		pool->reserved += ut_2_exp(n);//why not using size?
 		mutex_exit(&pool->mutex);//be careful
 		
@@ -239,6 +249,10 @@ void mem_area_free(void* ptr, mem_pool_t* pool){
 	}else{
 		//just free
 		list_add(&area->free_list,&pool->free_list[n]);
+		pool->count[n]++;
+#ifdef UNIV_DEBUG
+		pool->free_count[n]++;
+#endif
 		//mem_area_list_add(pool->free_list[n], area);
 		mem_area_set_free(area, TRUE);
 		assert(pool->reserved >= size);
