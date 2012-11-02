@@ -103,9 +103,7 @@ static int mem_pool_fill_free_list(ulong n, mem_pool_t* pool){
 	if(n > 63)
 		return FALSE;
 	//try to get a larger block
-	area = 	list_entry(&pool->free_list[n + 1], mem_area_t, free_list);
-	//area = pool->free_list[n + 1];
-	if (area == NULL) {
+	if (list_empty(&pool->free_list[n + 1])) {
 		assert(list_count(&pool->free_list[n + 1]) == pool->count[n + 1]);//
 		if( pool->count[n + 1] > 0 ){
 			//error
@@ -160,9 +158,8 @@ void* mem_area_alloc(ulong* psize, mem_pool_t *pool){
 	n = ut_2_log(ut_max(size + MEM_AREA_EXTRA_SIZE, MEM_AREA_MIN_SIZE));
 	
 	mutex_enter(&pool->mutex);
-	area = list_entry(&pool->free_list[n], mem_area_t, free_list);
 	//area = pool->free_list[n];
-	if(area == NULL){
+	if(list_empty(&pool->free_list[n])){
 		ret = mem_pool_fill_free(n, pool);
 		if(ret == FALSE){//fail to alloc from pool, alloc from os
 			mutex_exit(&pool->mutex);
@@ -274,12 +271,40 @@ ulong mem_pool_get_reserved(mem_pool_t* pool){
 	return reserved;
 }
 
+static inline int mem_pool_validate(mem_pool_t* pool){
+	mem_area_t*	area;
+	mem_area_t*	buddy;
+	int		free_space;
+	int		i;
+
+	mutex_enter(&pool->mutex);
+	free_space = 0;
+	for(i = 0; i<64; i++){
+		list_for_each_entry(area, &pool->free_list[i], free_list){
+			assert(mem_area_get_free(area));
+			assert(mem_area_get_size(area) == ut_2_exp(i));
+
+			buddy = mem_area_get_buddy(area, ut_2_exp(i), pool);
+
+			assert(!buddy || !mem_area_get_free(buddy)
+			     || (ut_2_exp(i) != mem_area_get_size(buddy)));
+
+			free_space += ut_2_exp(i);
+		}
+	}
+	assert(free_space + pool->reserved == pool->size);
+	mutex_exit(&pool->mutex);
+	return 0;
+}
+
 #define MiB 1048576
 void mem_pool_print_info(mem_pool_t* pool){
 	int i;
 
-	mutex_enter(&pool->mutex);
+	mem_pool_validate(pool);
+
 	printf("------------------------------------------------\n");
+	mutex_enter(&pool->mutex);
 	printf("Mempool:total size %lu; used size %lu; \n",pool->size / MiB, pool->reserved / MiB );
 	for(i = 0; i < 64; i++){
 		if( pool->count[i] > 0 ){
@@ -290,6 +315,6 @@ void mem_pool_print_info(mem_pool_t* pool){
 			printf("\n");
 		}
 	}
-	printf("------------------------------------------------\n");
 	mutex_exit(&pool->mutex);
+	printf("------------------------------------------------\n");
 }
