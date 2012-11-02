@@ -4,7 +4,11 @@
 
 #define MEM_AREA_MIN_SIZE 2 * MEM_AREA_EXTRA_SIZE
 #define MEM_AREA_FREE 1
-//declare as static private
+
+
+/** Data structure for a memory pool. The space is allocated using the buddy
+algorithm, where free list i contains areas of size 2 to power i. declare as
+static private*/
 struct mem_pool_struct{
 	byte* 	buf;
 	ulong 	size;
@@ -268,4 +272,24 @@ ulong mem_pool_get_reserved(mem_pool_t* pool){
 	reserved = pool->reserved;
 	mutex_exit(&pool->mutex);
 	return reserved;
+}
+
+#define MiB 1048576
+void mem_pool_print_info(mem_pool_t* pool){
+	int i;
+
+	mutex_enter(&pool->mutex);
+	printf("------------------------------------------------\n");
+	printf("Mempool:total size %lu; used size %lu; \n",pool->size / MiB, pool->reserved / MiB );
+	for(i = 0; i < 64; i++){
+		if( pool->count[i] > 0 ){
+			printf("Memarea %d:area size %lu; total count %lu; ", i, ut_2_exp(i) / MiB, pool->count[i] / MiB );
+#ifdef UNIV_DEBUG
+			printf("free count %lu; used count %lu;",pool->free_count[i] / MiB, (pool->count[i] - pool->free_count[i]) / MiB);
+#endif
+			printf("\n");
+		}
+	}
+	printf("------------------------------------------------\n");
+	mutex_exit(&pool->mutex);
 }

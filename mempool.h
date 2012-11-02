@@ -21,5 +21,6 @@ void mem_pool_free(mem_pool_t *mem_pool);
 void* mem_area_alloc(ulong* psize, mem_pool_t* pool);
 void mem_area_free(void* ptr, mem_pool_t* pool);
 ulong mem_pool_get_reserved(mem_pool_t *pool);
+void mem_pool_print_info(mem_pool_t* pool);
 
 #endif
