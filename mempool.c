@@ -1,7 +1,11 @@
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "util_type.h"
 #include "util_os.h"
 #include "mempool.h"
 
+#define MEM_AREA_COUNT 64
 #define MEM_AREA_MIN_SIZE 2 * MEM_AREA_EXTRA_SIZE
 #define MEM_AREA_FREE 1
 
@@ -14,17 +18,14 @@ struct mem_pool_struct{
 	ulong 	size;
 	ulong 	reserved;
 	mutex_t mutex;
-	list_head_t free_list[64];
-	ulong count[64];
-#ifdef UNIV_DEBUG
-	ulong free_count[64];
-#endif
-	//mem_area_t*  free_list[64];
+	list_head_t free_list[MEM_AREA_COUNT];
+	ulong count[MEM_AREA_COUNT];
+	//mem_area_t*  free_list[MEM_AREA_COUNT];
 };
 
 mem_pool_t* mem_comm_pool = NULL;
 
-static inline void mem_area_get_size(mem_area_t* area){
+static inline ulong mem_area_get_size(mem_area_t* area){
 	return (area->size_and_free & ~MEM_AREA_FREE);
 }
 
@@ -33,7 +34,7 @@ static inline void mem_area_set_size(mem_area_t* area, ulong size){
 }
 //@return TRUE if free 
 //we can use the last bit for every block size alloc in 2 exp
-static inline void mem_area_get_free(mem_area_t* area){
+static inline ibool mem_area_get_free(mem_area_t* area){
 	return (area->size_and_free & MEM_AREA_FREE);
 }
 
@@ -53,12 +54,9 @@ mem_pool_t* mem_pool_create(ulong size){
 	pool->size = size;
 	
 	mutex_create(&pool->mutex);
-	for(i = 0; i < 64; i++){
-		list_init(&pool->free_list[i]);
+	for(i = 0; i < MEM_AREA_COUNT; i++){
+		INIT_LIST_HEAD(&pool->free_list[i]);
 		pool->count[i] = 0;
-#ifdef UNIV_DEBUG
-		pool->free_count[i] = 0;
-#endif
 		//pool->free_list[i] = NULL;
 	}
 	
@@ -71,13 +69,12 @@ mem_pool_t* mem_pool_create(ulong size){
 		area = (mem_area_t*)(pool->buf + used);
 		mem_area_set_size(area, ut_2_exp(i));
 		mem_area_set_free(area, TRUE);
+
+		ut_memset((void*)area + MEM_AREA_EXTRA_SIZE, ut_2_exp(i) - MEM_AREA_EXTRA_SIZE);
 		
 		list_add(&area->free_list, &pool->free_list[i]);
 		//mem_area_list_add(pool->free_list[i], area);
 		pool->count[i]++;
-#ifdef UNIV_DEBUG
-		pool->free_count[i]++;
-#endif
 		used += ut_2_exp(i);
 	}
 	assert(size >= used);
@@ -97,35 +94,36 @@ static int mem_pool_fill_free_list(ulong n, mem_pool_t* pool){
 	mem_area_t* area2;
 	mem_area_t* tmp;
 	int ret;
-	
+
+#ifdef UNIV_DEBUG	
 	assert(mutex_own(&pool->mutex));
+#endif
 	
-	if(n > 63)
+	if(n >= MEM_AREA_COUNT - 1)
 		return FALSE;
 	//try to get a larger block
+	//area = list_entry(pool->free_list[n + 1].next, mem_area_t, free_list);
 	if (list_empty(&pool->free_list[n + 1])) {
 		assert(list_count(&pool->free_list[n + 1]) == pool->count[n + 1]);//
 		if( pool->count[n + 1] > 0 ){
 			//error
 		}
-		ret = mem_pool_fill_free_list(i + 1, pool);
+		ret = mem_pool_fill_free_list(n + 1, pool);
 		
 		if(ret == FALSE)
 			return FALSE;
 			
-		area = list_entry(&pool->free_list[n + 1], mem_area_t, free_list);
+		//area = list_entry(pool->free_list[n + 1].next, mem_area_t, free_list);
 		//area = pool->free_list[n + 1];
 	}
+	area = list_entry(pool->free_list[n + 1].next, mem_area_t, free_list);
 	
-	if ( pool->count[n + 1]) == 0){
+	if ( pool->count[n + 1] == 0){
 		//error
 	}
 
-	list_del_init(&area->free_list, &pool->free_list[n + 1]);
+	list_del_init(&area->free_list);
 	pool->count[n + 1]--;
-#ifdef UNIV_DEBUG
-	pool->free_count[n + 1]--;
-#endif
 
 	//new area
 	area2 = (mem_area_t*)((byte*)area + ut_2_exp(n));
@@ -134,18 +132,13 @@ static int mem_pool_fill_free_list(ulong n, mem_pool_t* pool){
 	mem_area_set_free(area2, TRUE);
 	list_add(&area2->free_list, &pool->free_list[n]);
 	pool->count[n]++;
-#ifdef UNIV_DEBUG
-	pool->free_count[n]++;
-#endif
 	//mem_area_list_add(pool->free_list[n], area2);
 	
 	//rest area
 	mem_area_set_size(area, ut_2_exp(n));
 	list_add(&area->free_list, &pool->free_list[n]);
 	pool->count[n]++;
-#ifdef UNIV_DEBUG
-	pool->free_count[n]++;
-#endif
+	return TRUE;
 	//mem_area_list_add(pool->free_list[n], area);
 }
 
@@ -158,25 +151,27 @@ void* mem_area_alloc(ulong* psize, mem_pool_t *pool){
 	n = ut_2_log(ut_max(size + MEM_AREA_EXTRA_SIZE, MEM_AREA_MIN_SIZE));
 	
 	mutex_enter(&pool->mutex);
+	//area = list_entry(pool->free_list[n].next, mem_area_t, free_list);
 	//area = pool->free_list[n];
 	if(list_empty(&pool->free_list[n])){
-		ret = mem_pool_fill_free(n, pool);
+		ret = mem_pool_fill_free_list(n, pool);
 		if(ret == FALSE){//fail to alloc from pool, alloc from os
 			mutex_exit(&pool->mutex);
 			return ut_malloc(size);
 		}
-		area = list_entry(&pool->free_list[n], mem_area_t, free_list);
+		//area = list_entry(pool->free_list[n].next, mem_area_t, free_list);
 		//area = pool->free_list[n];
 	}
+	area = list_entry(pool->free_list[n].next, mem_area_t, free_list);
 	//check if used
 	if(!mem_area_get_free(area)){
 		//error
 	}
-	assert(mem_area_get_size(pool) == ut_2_exp(n));
+	assert(mem_area_get_size(area) == ut_2_exp(n));
 	mem_area_set_free(area,FALSE);
-#ifdef UNIV_DEBUG
-	pool->free_count[n]--;
-#endif
+	list_del_init(&area->free_list);
+	pool->count[n]--;
+
 	pool->reserved += mem_area_get_size(area);
 	mutex_exit(&pool->mutex);
 	//sub struct size
@@ -207,7 +202,7 @@ void mem_area_free(void* ptr, mem_pool_t* pool){
 	ulong size;
 	ulong n;
 	//alloc from os
-	if(byte*)ptr < pool->buf || (byte*)ptr >= pool->buf + pool->size){
+	if( (byte*)ptr < pool->buf || (byte*)ptr >= pool->buf + pool->size ){
 		ut_free(ptr);
 		return;
 	}
@@ -218,6 +213,8 @@ void mem_area_free(void* ptr, mem_pool_t* pool){
 	}
 	
 	size = mem_area_get_size(area);
+	ut_memset(ptr, size - MEM_AREA_EXTRA_SIZE);
+
 	if(size == 0){
 		//error
 	}
@@ -226,22 +223,19 @@ void mem_area_free(void* ptr, mem_pool_t* pool){
 	
 	mutex_enter(&pool->mutex);
 	if(buddy && mem_area_get_free(buddy) && 
-		(size == mem_area_get_size(buddy)){
+		size == mem_area_get_size(buddy)){
 		//get buddy in free list, merge them at first, then free 
 		if((byte*)buddy < (byte*)area){ // buddy in front 
 			new_ptr = ((byte*)buddy) + MEM_AREA_EXTRA_SIZE;
-			mem_area_set_size(new_ptr, size * 2);
-			mem_area_set_free(new_ptr, FALSE);
+			mem_area_set_size(buddy, size * 2);
+			mem_area_set_free(buddy, FALSE);
 		}else { //buddy after
 			new_ptr = ptr;
-			mem_area_set_size(new_ptr, size * 2);
+			mem_area_set_size(area, size * 2);
 		}
 		
 		list_del_init(&buddy->free_list);
 		pool->count[n]--;
-#ifdef UNIV_DEBUG
-		pool->free_count[n]--;
-#endif
 		pool->reserved += ut_2_exp(n);//why not using size?
 		mutex_exit(&pool->mutex);//be careful
 		
@@ -251,9 +245,6 @@ void mem_area_free(void* ptr, mem_pool_t* pool){
 		//just free
 		list_add(&area->free_list,&pool->free_list[n]);
 		pool->count[n]++;
-#ifdef UNIV_DEBUG
-		pool->free_count[n]++;
-#endif
 		//mem_area_list_add(pool->free_list[n], area);
 		mem_area_set_free(area, TRUE);
 		assert(pool->reserved >= size);
@@ -279,17 +270,19 @@ static inline int mem_pool_validate(mem_pool_t* pool){
 
 	mutex_enter(&pool->mutex);
 	free_space = 0;
-	for(i = 0; i<64; i++){
+	for(i = 0; i<MEM_AREA_COUNT; i++){
 		list_for_each_entry(area, &pool->free_list[i], free_list){
-			assert(mem_area_get_free(area));
-			assert(mem_area_get_size(area) == ut_2_exp(i));
+			if(!list_empty(&pool->free_list[i])){
+				assert(mem_area_get_free(area));
+				assert(mem_area_get_size(area) == ut_2_exp(i));
 
-			buddy = mem_area_get_buddy(area, ut_2_exp(i), pool);
+				buddy = mem_area_get_buddy(area, ut_2_exp(i), pool);
 
-			assert(!buddy || !mem_area_get_free(buddy)
-			     || (ut_2_exp(i) != mem_area_get_size(buddy)));
+				assert(!buddy || !mem_area_get_free(buddy)
+				     || (ut_2_exp(i) != mem_area_get_size(buddy)));
 
-			free_space += ut_2_exp(i);
+				free_space += ut_2_exp(i);
+			}
 		}
 	}
 	assert(free_space + pool->reserved == pool->size);
@@ -305,13 +298,10 @@ void mem_pool_print_info(mem_pool_t* pool){
 
 	printf("------------------------------------------------\n");
 	mutex_enter(&pool->mutex);
-	printf("Mempool:total size %lu; used size %lu; \n",pool->size / MiB, pool->reserved / MiB );
-	for(i = 0; i < 64; i++){
+	printf("Mempool:total size %lu MB; used size %lu B; \n",pool->size / MiB, pool->reserved );
+	for(i = 0; i < MEM_AREA_COUNT; i++){
 		if( pool->count[i] > 0 ){
-			printf("Memarea %d:area size %lu; total count %lu; ", i, ut_2_exp(i) / MiB, pool->count[i] / MiB );
-#ifdef UNIV_DEBUG
-			printf("free count %lu; used count %lu;",pool->free_count[i] / MiB, (pool->count[i] - pool->free_count[i]) / MiB);
-#endif
+			printf("Memarea %d:area size %lu B; free count %lu; ", i, ut_2_exp(i), pool->count[i] );
 			printf("\n");
 		}
 	}

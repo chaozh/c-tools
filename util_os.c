@@ -1,12 +1,12 @@
 ﻿#include "util_os.h"
 //time
-int ut_usectime(ulong* ms, ulong* sec){
-	struct timeeval tv;
+int ut_usectime(ulong* sec, ulong* ms){
+	struct timeval tv;
 	int ret;
-	ret = gettimeofday(&tv);
+	ret = gettimeofday(&tv, NULL);
 	if(ret != -1){
-		*ms = (ulong)tv.tv_ms;
 		*sec = (ulong)tv.tv_sec;
+		*ms = (ulong)tv.tv_usec;
 	}
 	return ret;
 }
@@ -30,7 +30,7 @@ void mutex_create(
 }
 void mutex_destroy(mutex_t* mutex){
 	//assert(mutex->waiters == 0)
-	pthread_mutex_destroy(&mutex);
+	pthread_mutex_destroy(&mutex->os_mutex);
 }
 void mutex_enter(mutex_t* mutex){
 	int ret;
@@ -70,6 +70,11 @@ void mutex_exit(mutex_t* mutex){
 #endif
 	pthread_mutex_unlock(&mutex->os_mutex);
 }
+#ifdef UNIV_DEBUG
+ibool mutex_own(mutex_t* mutex){
+	return (mutex->thread_id == pthread_self());
+}
+#endif
 
 //mem
 void ut_memset(byte* ptr, ulong n){
@@ -84,7 +89,7 @@ void* ut_malloc_low(ulong n, int set_to_zero){
 	return ret;
 }
 void* ut_malloc(ulong n){
-	return ut_malloc_low(n, FALSE)
+	return ut_malloc_low(n, FALSE);
 }
 void ut_free(void *ptr){
 	if(ptr == NULL)

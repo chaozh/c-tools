@@ -1,9 +1,12 @@
 ﻿#ifndef UTIL_OS_H
 #define UTIL_OS_H
 
-#include<util_type.h>
+#include "util_type.h"
+
+#include <assert.h>
 #include <sys/time.h>
 #include <pthread.h>
+
 //debug
 #ifdef UNIV_DEBUG
 //for debug state
@@ -14,7 +17,7 @@
 #endif
 
 //time
-int ut_usectime(ulong* ms, ulong* sec);
+int ut_usectime(ulong* sec, ulong* ms);
 //mutex
 #define FAST_MUTEX_INIT NULL
 
@@ -40,6 +43,9 @@ void mutex_create(
 void mutex_destroy(mutex_t* mutex);
 void mutex_enter(mutex_t* mutex);
 void mutex_exit(mutex_t* mutex);
+#ifdef UNIV_DEBUG
+ibool mutex_own(mutex_t* mutex);
+#endif
 
 //mem
 void ut_memset(byte* ptr, ulong n);
