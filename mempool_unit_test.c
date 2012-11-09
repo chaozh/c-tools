@@ -47,7 +47,7 @@ void cache_init(void){
 
 int main(){
 	mem_pool_t* mem_pool;
-	cache_t *cache_test[array_length];
+	cache_t* cache_test[array_length];
 	ulong len;
 	int i;
 
@@ -63,6 +63,12 @@ int main(){
 	}
 
 	for(i = 0; i< array_length / 2; i++){
+		printf("free cache[%d]\n", i);
+		mem_area_free(cache_test[i], mem_pool);
+		mem_pool_print_info(mem_pool);
+	}
+
+	for(i = array_length / 2; i< array_length; i++){
 		printf("free cache[%d]\n", i);
 		mem_area_free(cache_test[i], mem_pool);
 		mem_pool_print_info(mem_pool);

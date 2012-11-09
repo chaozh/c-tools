@@ -292,6 +292,7 @@ static inline int mem_pool_validate(mem_pool_t* pool){
 
 #define MiB 1048576
 void mem_pool_print_info(mem_pool_t* pool){
+	mem_area_t* area;
 	int i;
 
 	mem_pool_validate(pool);
@@ -301,7 +302,8 @@ void mem_pool_print_info(mem_pool_t* pool){
 	printf("Mempool:total size %lu MB; used size %lu B; \n",pool->size / MiB, pool->reserved );
 	for(i = 0; i < MEM_AREA_COUNT; i++){
 		if( pool->count[i] > 0 ){
-			printf("Memarea %d:area size %lu B; free count %lu; ", i, ut_2_exp(i), pool->count[i] );
+			area = list_entry(pool->free_list[i].next, mem_area_t, free_list);
+			printf("Memarea %d:area size %lu/%lu B; free count %lu; ", i, ut_2_exp(i), mem_area_get_size(area), pool->count[i] );
 			printf("\n");
 		}
 	}
