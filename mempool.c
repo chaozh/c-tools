@@ -1,4 +1,4 @@
-#include <stdio.h>
+﻿#include <stdio.h>
 #include <stdlib.h>
 
 #include "util_type.h"
@@ -148,7 +148,7 @@ void* mem_area_alloc(ulong* psize, mem_pool_t *pool){
 	int ret;
 	
 	size = *psize;
-	n = ut_2_log(ut_max(size + MEM_AREA_EXTRA_SIZE, MEM_AREA_MIN_SIZE));
+	n = ut_2_log(ut_max(size + MEM_AREA_EXTRA_SIZE, MEM_AREA_MIN_SIZE));//origin size plus extra 
 	
 	mutex_enter(&pool->mutex);
 	//area = list_entry(pool->free_list[n].next, mem_area_t, free_list);

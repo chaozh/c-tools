@@ -1,4 +1,4 @@
-#include "util_type.h"
+﻿#include "util_type.h"
 
 #define UNIV_DEBUG
 
@@ -9,7 +9,6 @@
 
 #define array_length 200
 
-int initial_pool_size = 256;
 //for unit test
 typedef struct {
     /** Mutex to protect access to the structure */

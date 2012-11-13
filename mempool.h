@@ -7,6 +7,8 @@ typedef struct list_head list_head_t;
 typedef struct mem_area_struct mem_area_t;
 typedef struct mem_pool_struct mem_pool_t;
 
+extern mem_pool_t* mem_comm_pool;
+
 struct mem_area_struct{
 	ulong size_and_free; //may be default
 	list_head_t free_list;

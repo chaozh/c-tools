@@ -5,7 +5,7 @@ typedef unsigned char byte;
 typedef unsigned long ulong;
 typedef unsigned long long ulonglong;
 
-#define ibool unsigned int;
+#define ibool unsigned int
 #define TRUE 1
 #define FALSE 0
 static inline void* ut_align(const void* ptr, ulong align_no){
