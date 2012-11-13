@@ -19,10 +19,10 @@ static inline ulong ut_2_exp(ulong n){
 static inline ulong ut_2_log(ulong n){
 	ulong ret = 0;
 	for(;;){
+		ret++;
 		n = n / 2;
 		if(n == 0)
 			break;
-		ret++;
 	}		
 	return ret;
 }
