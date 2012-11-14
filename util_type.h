@@ -18,6 +18,7 @@ static inline ulong ut_2_exp(ulong n){
 
 static inline ulong ut_2_log(ulong n){
 	ulong ret = 0;
+	n = n - 1;//for number as 2^n
 	for(;;){
 		ret++;
 		n = n / 2;
